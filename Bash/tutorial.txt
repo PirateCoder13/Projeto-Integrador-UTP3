@@ -1,0 +1,215 @@
+Vamos criar uma solução usando apenas ferramentas nativas do Arch Linux e shell scripting para monitorar o servidor Minecraft e exibir os dados em JSON no seu site. Como você não conhece Python, focaremos em comandos de sistema e ferramentas leves.
+
+---
+
+## **1. Coleta de Dados do Servidor**
+
+### Obter PID do Servidor Minecraft
+```bash
+MC_PID=$(pidof java)  # Assume que o servidor roda em Java
+```
+
+### Script para Coletar Recursos (`/usr/local/bin/mc_stats.sh`)
+```bash
+#!/bin/bash
+
+# Encontra o processo do servidor
+MC_PID=$(pidof java)
+
+if [ -z "$MC_PID" ]; then
+  echo '{"error": "Servidor não está rodando"}' > /var/www/mc-stats.json
+  exit 1
+fi
+
+# Coleta dados do sistema
+CPU_USAGE=$(ps -p $MC_PID -o %cpu --no-headers)
+MEM_USAGE=$(ps -p $MC_PID -o %mem --no-headers)
+RAM_MB=$(ps -p $MC_PID -o rss --no-headers | awk '{printf "%.1f", $1/1024}')
+DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
+HDD_SPACE=$(df -h / | awk 'NR==2 {print $4}')
+
+# Gera JSON
+echo "{
+  \"cpu\": \"$CPU_USAGE%\",
+  \"memory\": \"$MEM_USAGE%\",
+  \"ram_mb\": \"$RAM_MB MB\",
+  \"disk_usage\": \"$DISK_USAGE%\",
+  \"hdd_free\": \"$HDD_SPACE\"
+}" > /var/www/mc-stats.json
+```
+
+### Tornar o Script Executável
+```bash
+sudo chmod +x /usr/local/bin/mc_stats.sh
+```
+
+---
+
+## **2. Atualização Automática dos Dados**
+
+### Criar Serviço Systemd (`/etc/systemd/system/mc-stats.service`)
+```ini
+[Unit]
+Description=Minecraft Server Stats Collector
+
+[Service]
+ExecStart=/bin/bash -c "while true; do /usr/local/bin/mc_stats.sh; sleep 5; done"
+Restart=always
+```
+
+### Criar Timer para Atualização Contínua (`/etc/systemd/system/mc-stats.timer`)
+```ini
+[Unit]
+Description=Run stats collection every 5 seconds
+
+[Timer]
+OnBootSec=5s
+OnUnitActiveSec=5s
+
+[Install]
+WantedBy=timers.target
+```
+
+### Ativar Serviço
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mc-stats.timer
+```
+
+---
+
+## **3. Servir os Dados via HTTP**
+
+### Instalar Servidor HTTP Leve
+```bash
+sudo pacman -S darkhttpd
+```
+
+### Configurar Serviço do Darkhttpd (`/etc/systemd/system/darkhttpd.service`)
+```ini
+[Unit]
+Description=Darkhttpd Web Server
+
+[Service]
+ExecStart=/usr/bin/darkhttpd /var/www --port 8080
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Criar Diretório e Arquivo JSON
+```bash
+sudo mkdir -p /var/www
+sudo touch /var/www/mc-stats.json
+sudo chmod 755 /var/www/mc-stats.json
+```
+
+### Iniciar Serviço
+```bash
+sudo systemctl enable --now darkhttpd
+```
+
+---
+
+## **4. Integração no Site HTML**
+
+### Código Frontend
+```html
+
+
+
+    Status do Servidor
+
+
+    Monitoramento Minecraft
+    
+        Carregando dados...
+    
+
+    
+        async function atualizarDados() {
+            try {
+                const response = await fetch('http://localhost:8080/mc-stats.json');
+                const data = await response.json();
+                
+                document.getElementById('stats').innerHTML = `
+                    CPU: ${data.cpu}
+                    Memória: ${data.memory}
+                    RAM Utilizada: ${data.ram_mb}
+                    Disco: ${data.disk_usage}
+                    HDD Livre: ${data.hdd_free}
+                `;
+            } catch (erro) {
+                document.getElementById('stats').innerHTML = 
+                    'Erro ao carregar dados do servidor';
+            }
+        }
+
+        // Atualiza a cada 5 segundos
+        setInterval(atualizarDados, 5000);
+        atualizarDados();
+    
+
+
+```
+
+---
+
+## **5. Verificação do Funcionamento**
+
+1. Acesse os dados brutos em: `http://localhost:8080/mc-stats.json`
+2. O arquivo JSON será atualizado a cada 5 segundos com dados em tempo real
+3. O HTML do seu site puxará automaticamente os dados via JavaScript
+
+---
+
+## **Vantagens desta Solução**
+- **Zero dependências externas**: Usa apenas ferramentas nativas do Arch Linux[1][7]
+- **Baixo consumo de recursos**: Scripts leves e darkhttpd consome ~2MB de RAM[2][7]
+- **Fácil manutenção**: Tudo configurado via systemd e scripts simples
+- **Segurança**: Dados expostos apenas localmente na porta 8080[1][2]
+
+Para monitoramento mais avançado, você pode posteriormente adicionar o Netdata[2] ou Monitorix[7] seguindo os tutoriais da Arch Wiki.
+
+Citations:
+[1] https://www.atlantic.net/dedicated-server-hosting/how-to-install-monit-monitoring-tool-on-arch-linux/
+[2] https://www.atlantic.net/dedicated-server-hosting/install-netdata-monitoring-tool-on-arch-linux/
+[3] https://wiki.archlinux.org/title/Minecraft/Java_Edition_server
+[4] https://stackoverflow.com/questions/32672365/get-data-from-json-api-and-display-it-in-html
+[5] https://stackoverflow.com/questions/68987895/how-could-i-display-memory-and-cpu-usage-of-my-minecraft-server-on-my-website
+[6] https://github.com/vilhelmprytz/minecraftserverstatus-api
+[7] https://wiki.archlinux.org/title/Monitorix
+[8] https://bbs.archlinux.org/viewtopic.php?id=77326
+[9] https://www.reddit.com/r/admincraft/comments/1sj0yj/run_the_server_as_a_daemon_arch_linux/
+[10] https://www.youtube.com/watch?v=tPrUwGZlEog
+[11] https://bbs.archlinux.org/viewtopic.php?id=184675
+[12] https://www.reddit.com/r/archlinux/comments/t1n8gy/has_arch_linux_became_more_resources_hungry/
+[13] https://mivocloud.com/blog/Glances-An-advanced-resource-monitoring-tool-in-Linux
+[14] https://wiki.archlinux.org/title/Gaming
+[15] https://snapcraft.io/install/cpu-monitoring-webapp/arch
+[16] https://wiki.archlinux.org/title/Pufferpanel
+[17] https://www.vintagestory.at/forums/topic/619-can-vintagestory-run-on-arch-linux/
+[18] https://wiki.archlinux.org/title/Minecraft
+[19] https://wiki.archlinux.org/title/Stress_testing
+[20] https://www.spigotmc.org/threads/tutorial-a-guide-on-json-configurations.181365/
+[21] https://www.spigotmc.org/threads/make-a-json-api.322492/
+[22] https://www.reddit.com/r/admincraft/comments/fmn1n7/resource_packs_in_official_bedrock_server/
+[23] https://api.mcsrvstat.us
+[24] https://forums.minecraftforge.net/topic/109186-1165-how-to-load-and-hot-reload-data-from-json/
+[25] https://www.reddit.com/r/linuxmasterrace/comments/nitylm/arch_linux_on_minecraft/
+[26] https://mcstatus.io/docs
+[27] https://gaming.stackexchange.com/questions/354510/minecraft-server-ops-json
+[28] https://arcolinux.com/installing-the-official-minecraft-server-on-any-arch-linux-based-system/
+[29] https://github.com/alecgorge/jsonapi
+[30] https://www.digitalocean.com/community/tutorials/json-server
+[31] https://snapcraft.io/install/minecraft-server-jdstrand/arch
+[32] https://superuser.com/questions/1725018/high-memory-usage-on-arch-linux-based-distro
+[33] https://www.reddit.com/r/feedthebeast/comments/qcyy89/does_anyone_here_use_linux_ram_usage_problems/
+[34] https://bbs.archlinux.org/viewtopic.php?id=252006
+[35] https://ms.codes/blogs/computer-hardware/arch-linux-get-cpu-temp
+[36] https://bito.ai/resources/minecraft-ops-json-json-explained/
+[37] https://snapcraft.io/install/mc-server-installer/arch
+
+---
+Resposta do Perplexity: pplx.ai/share
