@@ -1,25 +1,25 @@
 #!/bin/bash
 
-PROCESS_NAME="firefox"
+# Encontra o processo do servidor
+MC_PID=$(pidof java)
 
-while true; do
-    PID=$(pgrep -o $PROCESS_NAME)
+if [ -z "$MC_PID" ]; then
+  echo '{"error": "Servidor não está rodando"}' > /var/www/mc-stats.json
+  exit 1
+fi
 
-    if [ -z "$PID" ]; then
-        continue
-    fi
+# Coleta dados do sistema
+CPU_USAGE=$(ps -p $MC_PID -o %cpu --no-headers)
+MEM_USAGE=$(ps -p $MC_PID -o %mem --no-headers)
+RAM_MB=$(ps -p $MC_PID -o rss --no-headers | awk '{printf "%.1f", $1/1024}')
+DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | tr -d '%')
+HDD_SPACE=$(df -h / | awk 'NR==2 {print $4}')
 
-    CPU_USAGE=$(ps -p $PID -o %cpu | tail -n 1)
-    MEMORY_USAGE=$(ps -p $PID -o %mem | tail -n 1)
-    STORAGE_USAGE=$(du -sh /proc/$PID | cut -f1)
-    COMMAND=$(ps -p $PID -o comm=)
-
-    echo "Processo: $COMMAND"
-    echo "PID: $PID"
-    echo "Uso de CPU: $CPU_USAGE%"
-    echo "Uso de Memória: $MEMORY_USAGE%"
-    echo "Uso de Armazenamento: $STORAGE_USAGE"
-    echo "-----------------------------"
-
-    sleep 1
-done
+# Gera JSON
+echo "{
+  \"cpu\": \"$CPU_USAGE%\",
+  \"memory\": \"$MEM_USAGE%\",
+  \"ram_mb\": \"$RAM_MB MB\",
+  \"disk_usage\": \"$DISK_USAGE%\",
+  \"hdd_free\": \"$HDD_SPACE\"
+}" > /var/www/mc-stats.json
